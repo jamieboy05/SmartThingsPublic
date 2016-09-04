@@ -21,6 +21,7 @@ metadata {
 		capability "Temperature Measurement"
 		capability "Relative Humidity Measurement"
 		capability "Health Check"
+		capability "Sensor"
 
 		fingerprint endpointId: "01", inClusters: "0001,0003,0020,0402,0B05,FC45", outClusters: "0019,0003"
 	}
@@ -81,6 +82,13 @@ def parse(String description) {
 	else if (description?.startsWith('temperature: ') || description?.startsWith('humidity: ')) {
 		map = parseCustomMessage(description)
 	}
+
+	// Temporary fix for the case when Device is OFFLINE and is connected again
+	if (state.lastActivity == null){
+		state.lastActivity = now()
+		sendEvent(name: "deviceWatch-lastActivity", value: state.lastActivity, description: "Last Activity is on ${new Date((long)state.lastActivity)}", displayed: false, isStateChange: true)
+	}
+	state.lastActivity = now()
 
 	log.debug "Parse returned $map"
 	return map ? createEvent(map) : null
@@ -225,7 +233,8 @@ private Map getTemperatureResult(value) {
 	return [
 		name: 'temperature',
 		value: value,
-		descriptionText: descriptionText
+		descriptionText: descriptionText,
+		unit: temperatureScale
 	]
 }
 
@@ -236,6 +245,20 @@ private Map getHumidityResult(value) {
 		value: value,
 		unit: '%'
 	]
+}
+
+/**
+ * PING is used by Device-Watch in attempt to reach the Device
+ * */
+def ping() {
+	if (state.lastActivity < (now() - (1000 * device.currentValue("checkInterval"))) ){
+		log.info "ping, alive=no, lastActivity=${state.lastActivity}"
+		state.lastActivity = null
+		return zigbee.readAttribute(0x001, 0x0020) // Read the Battery Level
+	} else {
+		log.info "ping, alive=yes, lastActivity=${state.lastActivity}"
+		sendEvent(name: "deviceWatch-lastActivity", value: state.lastActivity, description: "Last Activity is on ${new Date((long)state.lastActivity)}", displayed: false, isStateChange: true)
+	}
 }
 
 def refresh()
@@ -253,7 +276,7 @@ def refresh()
 }
 
 def configure() {
-	sendEvent(name: "checkInterval", value: 7200, displayed: false)
+	sendEvent(name: "checkInterval", value: 14400, displayed: false, data: [protocol: "zigbee"])
 
 	log.debug "Configuring Reporting and Bindings."
 	def configCmds = [
